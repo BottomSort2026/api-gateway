@@ -42,7 +42,6 @@ yarn-error.log
 /example
 
 # tests
-/test
 /benchmarks/memory
 /coverage
 /.nyc_output
@@ -51,5 +50,21 @@ yarn-error.log
 build/config\.gypi
 
 .npmrc
-pnpm-lock.yaml
 /.history
+
+# build output
+/dist
+
+# local environment (never commit)
+.env
+
+
+.git
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+*.md
+Dockerfile
