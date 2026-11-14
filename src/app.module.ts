@@ -1,10 +1,27 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { APP_FILTER } from '@nestjs/core';
+import { ChatController } from './chat/chat.controller';
+import { GatewayExceptionFilter } from './common/gateway-exception.filter';
+import { GatewayConfig } from './config/gateway-config';
+import { HealthController } from './health/health.controller';
+import { MlController } from './ml/ml.controller';
+import { ProfilesController } from './profiles/profiles.controller';
+import { ProxyService } from './proxy/proxy.service';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [
+    HealthController,
+    ProfilesController,
+    ChatController,
+    MlController,
+  ],
+  providers: [
+    {
+      provide: GatewayConfig,
+      useFactory: () => GatewayConfig.fromEnv(process.env),
+    },
+    ProxyService,
+    { provide: APP_FILTER, useClass: GatewayExceptionFilter },
+  ],
 })
 export class AppModule {}

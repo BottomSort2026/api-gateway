@@ -1,98 +1,129 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# api-gateway
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Single entry point of **Flame in Freefall** (NASA Space Apps 2026, team BottomSort).
+A thin NestJS reverse proxy: it routes, sets CORS and returns JSON errors. It holds no
+business logic and no knowledge of the request or response schemas.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+`ARCHITECTURE.md` is the source of truth for the system. This README covers only the gateway.
 
-## Description
+## Routes
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| Public route | Goes to | Used by |
+|---|---|---|
+| `GET /health` | answered by the gateway | Compose healthcheck |
+| `GET /profiles` | `profiles.json` (static) or a service, see `PROFILES_MODE` | Library |
+| `POST /chat` | `${MCP_URL}/chat` | Assistant |
+| `GET /ml/model-info` | `${ML_URL}/model-info` | Flame lab |
+| `POST /ml/predict` | `${ML_URL}/predict` | Flame lab |
+| any other `GET` | `${FRONTEND_URL}` (when set) | pages and assets |
 
-## Project setup
+- REST + JSON on both sides. Bodies are streamed, never parsed: the gateway does not
+  change when the `/chat` or `/ml/predict` contracts do, and a streamed chat answer
+  passes through chunk by chunk.
+- Only `/chat` reaches MCP. The MCP protocol endpoint is internal and is never exposed.
+- `/health`, `/profiles`, `/chat` and `/ml` are reserved for the API: unknown paths
+  under them are a JSON 404 and never fall through to the frontend.
+- Status codes and bodies returned by a service (for example a FastAPI 422) are
+  forwarded unchanged.
+
+## Errors produced by the gateway
+
+Always JSON, with CORS headers: `{ "error": "<code>", "detail": "<text>" }`.
+
+| Status | `error` | Meaning |
+|---|---|---|
+| 502 | `upstream_unavailable` | The service behind the route is down or not resolvable |
+| 504 | `upstream_timeout` | The service did not start answering in time |
+| 413 | `payload_too_large` | Request body over `MAX_BODY_BYTES` |
+| 404 | `profiles_not_built` | `PROFILES_MODE=static` and the file is missing |
+| 404 | `not_found` | Unknown route |
+
+The gateway starts and answers `/health` even when a service is down; only that
+service's routes return 502.
+
+## Environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `ML_URL` | yes | none | ML service, e.g. `http://ml:8000` |
+| `MCP_URL` | yes | none | MCP + agent service, e.g. `http://mcp:8001` |
+| `FRONTEND_URL` | no | none (API-only) | Frontend container, e.g. `http://frontend:80` |
+| `PORT` | no | `3000` | Port the gateway listens on |
+| `PROFILES_MODE` | no | `static` | `static`: serve `PROFILES_PATH`. `proxy`: forward to `PROFILES_UPSTREAM` |
+| `PROFILES_PATH` | no | `/data/profiles.json` | Offline-built profiles, mounted read-only |
+| `PROFILES_UPSTREAM` | no | `MCP_URL` | Service that owns `GET /profiles` in `proxy` mode |
+| `CHAT_TIMEOUT_MS` | no | `120000` | Wait for the first byte of a `/chat` answer |
+| `UPSTREAM_TIMEOUT_MS` | no | `30000` | Wait for the first byte of any other answer |
+| `MAX_BODY_BYTES` | no | `1048576` | Largest request body forwarded |
+| `CORS_ALLOWED_ORIGIN_REGEX` | no | any `http://localhost:<port>` | Origins allowed to call the API cross-origin |
+
+The process exits at start with the full list of problems if the configuration is invalid.
+`DATA_PROVIDER_URL` is not read: no route needs it while that service's role is OPEN.
+
+## Develop
 
 ```bash
-$ pnpm install
+pnpm install
+cp .env.example .env      # set ML_URL and MCP_URL
+pnpm start:dev            # http://localhost:3000
+
+pnpm test                 # unit tests
+pnpm test:e2e             # every route against mock services
+pnpm lint
 ```
 
-## Compile and run the project
+Frontend against a local gateway: run the Vite dev server with
+`VITE_API_URL=http://localhost:3000`. The default CORS pattern already allows it.
+
+## Docker and Compose
+
+`pnpm-lock.yaml` must be committed: the image installs with `--frozen-lockfile`.
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+docker build -t flame-gateway .
 ```
 
-## Run tests
+Block for the root `compose.yaml`. Only the gateway publishes a port:
 
-```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+```yaml
+services:
+  gateway:
+    build: ./api-gateway            # path to this repository
+    ports:
+      - "${GATEWAY_PORT:-8080}:3000"
+    environment:
+      ML_URL: ${ML_URL:-http://ml:8000}
+      MCP_URL: ${MCP_URL:-http://mcp:8001}
+      FRONTEND_URL: ${FRONTEND_URL:-http://frontend:80}
+      PROFILES_MODE: ${PROFILES_MODE:-static}
+    volumes:
+      - ${PROFILES_DIR:-./artifacts}:/data:ro   # folder that holds profiles.json
+    restart: unless-stopped
 ```
 
-## Deployment
+## Rules for the services behind the gateway
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- Do not add CORS headers. The gateway owns them and drops any that a service sends.
+- Expose `GET /health`.
+- Log the `X-Request-ID` header. The gateway logs the same id and returns it to the
+  client, so one request can be followed across services.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Layout
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+```
+src/
+  main.ts                       bootstrap
+  app.setup.ts                  request id, CORS, frontend fallback (shared with the e2e tests)
+  app.module.ts
+  config/gateway-config.ts      environment, validated at start-up
+  proxy/proxy.service.ts        streams a request to a service and the answer back
+  chat/  ml/  profiles/  health/   one controller per public route group
+  common/                       JSON error shape, exception filter, request id
+test/
+  app.e2e-spec.ts               every route, against mock services
+  mock-service.ts
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Adding a route: add a handler in the matching controller that calls `ProxyService.forward`
+with the target URL from `GatewayConfig`, add a case to `test/app.e2e-spec.ts`, and add the
+path prefix to `API_PATH` in `src/app.setup.ts` if it is a new top-level prefix.
