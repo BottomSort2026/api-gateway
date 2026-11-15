@@ -4,7 +4,7 @@ import { ChatController } from './chat/chat.controller';
 import { GatewayExceptionFilter } from './common/gateway-exception.filter';
 import { GatewayConfig } from './config/gateway-config';
 import { HealthController } from './health/health.controller';
-import { MlController } from './ml/ml.controller';
+import { LabController } from './lab/lab.controller';
 import { ProfilesController } from './profiles/profiles.controller';
 import { ProxyService } from './proxy/proxy.service';
 
@@ -13,7 +13,7 @@ import { ProxyService } from './proxy/proxy.service';
     HealthController,
     ProfilesController,
     ChatController,
-    MlController,
+    LabController,
   ],
   providers: [
     {

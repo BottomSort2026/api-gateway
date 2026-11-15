@@ -4,8 +4,13 @@ import { requestId } from './common/request-id.middleware';
 import { GatewayConfig } from './config/gateway-config';
 import { ProxyService } from './proxy/proxy.service';
 
-/** Paths owned by the API. They must never be page routes in the frontend. */
-const API_PATH = /^\/(health|profiles|chat|ml)(\/|$)/;
+/**
+ * Paths owned by the API. They must never be page routes in the frontend. A GET under any
+ * other prefix goes to the frontend, so every new API prefix must be added here.
+ * `ml` has no routes any more (the Flame Lab moved to /lab, and the engine is internal); it
+ * stays reserved so an old client gets a JSON 404 instead of a page.
+ */
+const API_PATH = /^\/(health|profiles|chat|lab|ml)(\/|$)/;
 
 /**
  * Everything that is configured on the HTTP server, shared by main.ts and the

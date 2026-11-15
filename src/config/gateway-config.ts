@@ -6,24 +6,23 @@ const DEFAULT_CORS_ORIGIN = '^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$';
 
 /**
  * Everything the gateway reads from the environment, validated once at start-up.
- * Service URLs are never hard-coded (ARCHITECTURE.md §5).
+ * Service URLs are never hard-coded. The engine has no URL here: it is internal, and
+ * the Flame Lab reaches it through the MCP service.
  */
 export class GatewayConfig {
   /** Port the gateway listens on. */
   port!: number;
-  /** ML service base URL, e.g. http://ml:8000 */
-  mlUrl!: string;
-  /** MCP + agent service base URL, e.g. http://mcp:8001 */
+  /** MCP service base URL (/chat and /lab/*), e.g. http://mcp:8001 */
   mcpUrl!: string;
   /** Frontend container base URL. When null the gateway is API-only. */
   frontendUrl!: string | null;
-  /** OPEN in ARCHITECTURE.md §7: a static file behind the gateway, or a service route. */
+  /** Still undecided: a static file behind the gateway, or a service route. Both work. */
   profilesMode!: ProfilesMode;
   /** Location of profiles.json when profilesMode is "static". */
   profilesPath!: string;
   /** Service that owns GET /profiles when profilesMode is "proxy". */
   profilesUpstream!: string;
-  /** How long to wait for the first byte of a /chat answer. */
+  /** How long to wait for the first byte of an answer that waits for the LLM: /chat and /lab/predict. */
   chatTimeoutMs!: number;
   /** How long to wait for the first byte of any other upstream answer. */
   upstreamTimeoutMs!: number;
@@ -67,7 +66,6 @@ export class GatewayConfig {
 
     const config = new GatewayConfig();
     config.port = positiveInt('PORT', 3000);
-    config.mlUrl = url('ML_URL', true) ?? '';
     config.mcpUrl = url('MCP_URL', true) ?? '';
     config.frontendUrl = url('FRONTEND_URL', false);
 

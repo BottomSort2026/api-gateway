@@ -30,14 +30,12 @@ async function createGateway(
 }
 
 describe('API gateway (e2e)', () => {
-  let ml: MockService;
   let mcp: MockService;
   let frontend: MockService;
   let dataDir: string;
   let app: NestExpressApplication;
 
   const baseEnv = (): Record<string, string> => ({
-    ML_URL: ml.url,
     MCP_URL: `${mcp.url}/`, // a trailing slash must not break routing
     FRONTEND_URL: frontend.url,
     PROFILES_PATH: join(dataDir, 'profiles.json'),
@@ -47,8 +45,7 @@ describe('API gateway (e2e)', () => {
   });
 
   beforeAll(async () => {
-    [ml, mcp, frontend] = await Promise.all([
-      startMockService('ml'),
+    [mcp, frontend] = await Promise.all([
       startMockService('mcp'),
       startMockService('frontend'),
     ]);
@@ -58,7 +55,7 @@ describe('API gateway (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
-    await Promise.all([ml.close(), mcp.close(), frontend.close()]);
+    await Promise.all([mcp.close(), frontend.close()]);
     rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -126,32 +123,78 @@ describe('API gateway (e2e)', () => {
     });
   });
 
-  describe('/ml', () => {
-    it('GET /ml/model-info -> ML /model-info', async () => {
-      const res = await gateway().get('/ml/model-info').expect(200);
-      expect(res.body).toMatchObject({ service: 'ml', url: '/model-info' });
-    });
+  describe('/lab (Flame Lab, through the MCP)', () => {
+    const labRequest = {
+      inputs: {
+        fuel: 'methanol',
+        pressure_atm: 1.0,
+        o2: 0.21,
+        suppressant: 'none',
+        suppressant_fraction: 0.0,
+        droplet_d0_mm: 3.0,
+      },
+      language: 'es',
+    };
 
-    it('POST /ml/predict -> ML /predict, keeping the query string', async () => {
+    it('POST /lab/predict -> MCP /lab/predict, body untouched and query string kept', async () => {
       const res = await gateway()
-        .post('/ml/predict?explain=1')
-        .send({ fuel: 'heptane', o2: 0.21 })
+        .post('/lab/predict?trace=1')
+        .send(labRequest)
         .expect(200);
       const echo = res.body as Echo;
-      expect(echo.url).toBe('/predict?explain=1');
-      expect(JSON.parse(echo.body)).toEqual({ fuel: 'heptane', o2: 0.21 });
+      expect(echo.service).toBe('mcp');
+      expect(echo.method).toBe('POST');
+      expect(echo.url).toBe('/lab/predict?trace=1');
+      expect(JSON.parse(echo.body)).toEqual(labRequest);
+      expect(echo.headers['x-request-id']).toBe(res.headers['x-request-id']);
     });
 
-    it('returns the service errors unchanged (e.g. FastAPI 422)', async () => {
+    it('GET /lab/model-info -> MCP /lab/model-info, not the frontend', async () => {
+      const res = await gateway().get('/lab/model-info').expect(200);
+      expect(res.body).toMatchObject({
+        service: 'mcp',
+        method: 'GET',
+        url: '/lab/model-info',
+      });
+    });
+
+    it('returns the MCP errors unchanged (e.g. 422 invalid_inputs)', async () => {
       const res = await gateway()
-        .post('/ml/predict?status=422')
-        .send({})
+        .post('/lab/predict?status=422')
+        .send(labRequest)
         .expect(422);
-      expect(res.body).toEqual({ detail: 'mock ml error 422' });
+      expect(res.body).toEqual({ detail: 'mock mcp error 422' });
     });
 
-    it('answers 404 JSON for any other /ml path', async () => {
-      const res = await gateway().get('/ml/docs').expect(404);
+    it('answers 404 JSON for any other /lab path, never the frontend', async () => {
+      const page = await gateway().get('/lab/docs').expect(404);
+      expect(page.body).toMatchObject({ error: 'not_found' });
+      const post = await gateway().post('/lab/explain').send({}).expect(404);
+      expect(post.body).toMatchObject({ error: 'not_found' });
+    });
+
+    it('rejects a body over the limit with 413 JSON', async () => {
+      const res = await gateway()
+        .post('/lab/predict')
+        .send({ ...labRequest, padding: 'x'.repeat(2000) })
+        .expect(413);
+      expect(res.body).toMatchObject({ error: 'payload_too_large' });
+    });
+  });
+
+  describe('the engine and the MCP protocol stay internal', () => {
+    it('no route reaches the engine: the old /ml routes are a JSON 404', async () => {
+      const predict = await gateway().post('/ml/predict').send({}).expect(404);
+      expect(predict.body).toMatchObject({ error: 'not_found' });
+      const info = await gateway().get('/ml/model-info').expect(404);
+      expect(info.body).toMatchObject({ error: 'not_found' });
+    });
+
+    it('does not expose the MCP protocol endpoint', async () => {
+      const res = await gateway()
+        .post('/mcp')
+        .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+        .expect(404);
       expect(res.body).toMatchObject({ error: 'not_found' });
     });
   });
@@ -174,7 +217,7 @@ describe('API gateway (e2e)', () => {
   describe('CORS', () => {
     it('allows the Vite dev origin and drops the CORS headers of the service', async () => {
       const res = await gateway()
-        .get('/ml/model-info')
+        .get('/lab/model-info')
         .set('Origin', DEV_ORIGIN)
         .expect(200);
       expect(res.headers['access-control-allow-origin']).toBe(DEV_ORIGIN);
@@ -182,7 +225,7 @@ describe('API gateway (e2e)', () => {
 
     it('does not allow other origins', async () => {
       const res = await gateway()
-        .get('/ml/model-info')
+        .get('/lab/model-info')
         .set('Origin', 'https://evil.example')
         .expect(200);
       expect(res.headers['access-control-allow-origin']).toBeUndefined();
@@ -229,22 +272,57 @@ describe('API gateway (e2e)', () => {
     let degraded: NestExpressApplication;
 
     beforeAll(async () => {
-      degraded = await createGateway({ ...baseEnv(), ML_URL: DOWN });
+      degraded = await createGateway({ ...baseEnv(), MCP_URL: DOWN });
     });
     afterAll(() => degraded.close());
 
     it('answers 502 JSON on its routes only', async () => {
-      const res = await request(degraded.getHttpServer())
-        .post('/ml/predict')
-        .send({})
-        .expect(502);
-      expect(res.body).toMatchObject({ error: 'upstream_unavailable' });
+      const server = degraded.getHttpServer();
+      for (const call of [
+        request(server).post('/lab/predict').send({}),
+        request(server).get('/lab/model-info'),
+        request(server).post('/chat').send({}),
+      ]) {
+        const res = await call.expect(502);
+        expect(res.body).toMatchObject({ error: 'upstream_unavailable' });
+      }
 
-      await request(degraded.getHttpServer()).get('/health').expect(200);
-      await request(degraded.getHttpServer())
-        .post('/chat')
+      await request(server).get('/health').expect(200);
+      const page = await request(server).get('/library').expect(200);
+      expect(page.body).toMatchObject({ service: 'frontend' });
+    });
+  });
+
+  describe('timeouts', () => {
+    let timed: NestExpressApplication;
+
+    beforeAll(async () => {
+      // The mock answers ?slow=1 after 500 ms: longer than the default timeout, shorter
+      // than the LLM timeout.
+      timed = await createGateway({
+        ...baseEnv(),
+        UPSTREAM_TIMEOUT_MS: '200',
+        CHAT_TIMEOUT_MS: '2000',
+      });
+    });
+    afterAll(() => timed.close());
+
+    it('POST /lab/predict waits as long as /chat: it waits for the LLM explanation', async () => {
+      const res = await request(timed.getHttpServer())
+        .post('/lab/predict?slow=1')
         .send({})
         .expect(200);
+      expect(res.body).toMatchObject({
+        service: 'mcp',
+        url: '/lab/predict?slow=1',
+      });
+    });
+
+    it('GET /lab/model-info keeps the short default timeout', async () => {
+      const res = await request(timed.getHttpServer())
+        .get('/lab/model-info?slow=1')
+        .expect(504);
+      expect(res.body).toMatchObject({ error: 'upstream_timeout' });
     });
   });
 
