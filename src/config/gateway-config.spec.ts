@@ -12,6 +12,7 @@ describe('GatewayConfig.fromEnv', () => {
       profilesMode: 'static',
       profilesPath: '/data/profiles.json',
       profilesUpstream: 'http://mcp:8001',
+      trainingDataPath: 'data/flex-training.csv',
       chatTimeoutMs: 120_000,
       upstreamTimeoutMs: 30_000,
     });

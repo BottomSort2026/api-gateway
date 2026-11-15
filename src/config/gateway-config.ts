@@ -22,6 +22,8 @@ export class GatewayConfig {
   profilesPath!: string;
   /** Service that owns GET /profiles when profilesMode is "proxy". */
   profilesUpstream!: string;
+  /** The Flame Lab's training CSV, served by GET /datasets/flex-training.csv. Relative to the working directory. */
+  trainingDataPath!: string;
   /** How long to wait for the first byte of an answer that waits for the LLM: /chat and /lab/predict. */
   chatTimeoutMs!: number;
   /** How long to wait for the first byte of any other upstream answer. */
@@ -76,6 +78,9 @@ export class GatewayConfig {
     config.profilesMode = mode === 'proxy' ? 'proxy' : 'static';
     config.profilesPath = env.PROFILES_PATH?.trim() || '/data/profiles.json';
     config.profilesUpstream = url('PROFILES_UPSTREAM', false) ?? config.mcpUrl;
+    // Kept in this repository (data/) and copied into the image: there is no database yet.
+    config.trainingDataPath =
+      env.TRAINING_DATA_PATH?.trim() || 'data/flex-training.csv';
 
     config.chatTimeoutMs = positiveInt('CHAT_TIMEOUT_MS', 120_000);
     config.upstreamTimeoutMs = positiveInt('UPSTREAM_TIMEOUT_MS', 30_000);

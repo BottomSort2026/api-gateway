@@ -9,8 +9,9 @@ import { ProxyService } from './proxy/proxy.service';
  * other prefix goes to the frontend, so every new API prefix must be added here.
  * `ml` has no routes any more (the Flame Lab moved to /lab, and the engine is internal); it
  * stays reserved so an old client gets a JSON 404 instead of a page.
+ * `datasets` holds files the gateway serves itself (the Flame Lab training CSV).
  */
-const API_PATH = /^\/(health|profiles|chat|lab|ml)(\/|$)/;
+const API_PATH = /^\/(health|profiles|chat|lab|ml|datasets)(\/|$)/;
 
 /**
  * Everything that is configured on the HTTP server, shared by main.ts and the

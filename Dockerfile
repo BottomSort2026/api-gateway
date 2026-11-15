@@ -21,6 +21,8 @@ WORKDIR /app
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# Files served by the gateway itself (GET /datasets/*): no database yet.
+COPY data ./data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \

@@ -1,6 +1,6 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -214,6 +214,56 @@ describe('API gateway (e2e)', () => {
     });
   });
 
+  describe('GET /datasets/flex-training.csv (served by the gateway)', () => {
+    // The default TRAINING_DATA_PATH: the file committed in this repository.
+    const committed = join(__dirname, '..', 'data', 'flex-training.csv');
+
+    it('serves the CSV committed in this repository as a download, byte for byte', async () => {
+      const res = await gateway()
+        .get('/datasets/flex-training.csv')
+        .buffer(true)
+        .parse((r, done) => {
+          const chunks: Buffer[] = [];
+          r.on('data', (c: Buffer) => chunks.push(c));
+          r.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="flex-training.csv"',
+      );
+      expect(res.body).toEqual(readFileSync(committed));
+      expect((res.body as Buffer).toString('utf8')).toMatch(
+        /^cir_id,testsheet_id,test_end,fuel,/,
+      );
+    });
+
+    it('answers 404 JSON for any other /datasets path, never the frontend', async () => {
+      const res = await gateway().get('/datasets/other.csv').expect(404);
+      expect(res.body).toMatchObject({ error: 'not_found' });
+      await gateway().get('/datasets').expect(404);
+    });
+
+    describe('when the file is missing', () => {
+      let missing: NestExpressApplication;
+
+      beforeAll(async () => {
+        missing = await createGateway({
+          ...baseEnv(),
+          TRAINING_DATA_PATH: join(dataDir, 'nothing-here.csv'),
+        });
+      });
+      afterAll(() => missing.close());
+
+      it('answers 404 JSON training_data_missing', async () => {
+        const res = await request(missing.getHttpServer())
+          .get('/datasets/flex-training.csv')
+          .expect(404);
+        expect(res.body).toMatchObject({ error: 'training_data_missing' });
+      });
+    });
+  });
+
   describe('CORS', () => {
     it('allows the Vite dev origin and drops the CORS headers of the service', async () => {
       const res = await gateway()
@@ -288,6 +338,7 @@ describe('API gateway (e2e)', () => {
       }
 
       await request(server).get('/health').expect(200);
+      await request(server).get('/datasets/flex-training.csv').expect(200);
       const page = await request(server).get('/library').expect(200);
       expect(page.body).toMatchObject({ service: 'frontend' });
     });
